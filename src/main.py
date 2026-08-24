@@ -57,12 +57,13 @@ class App:
         self.cfg = cfg
         self.conn = db.connect(cfg.db_path)
         self.fees = FeeSchedule.from_config(cfg)
-        # Public market data: production, read-only. Authenticated calls
-        # (auth verification, future order flow) use demo credentials.
+        # Public market data: production, read-only, UNAUTHENTICATED — the
+        # configured key belongs to the demo environment and must never be
+        # sent to prod (prod may 401 a signature from a key it doesn't know).
+        # Authenticated calls (verify-auth, future order flow) build their own
+        # demo client with the credentials.
         self.kalshi = KalshiClient(
             cfg.kalshi_prod_base_url,
-            api_key_id=cfg.kalshi_api_key_id,
-            private_key_path=cfg.kalshi_private_key_path,
             rate_limit_rps=cfg.rate_limit_rps)
         self.poly = PolymarketClient(
             cfg.polymarket_gamma_base_url, cfg.polymarket_clob_base_url,

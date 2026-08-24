@@ -1,0 +1,67 @@
+# Kalshi Edge Scanner configuration.
+# All tunables live here; secrets live in .env (see .env.example).
+
+# --- Environment ---
+# Market data (read-only) comes from production; anything authenticated
+# (and any future order flow) targets the demo environment.
+kalshi_prod_base_url: "https://api.elections.kalshi.com/trade-api/v2"
+kalshi_demo_base_url: "https://demo-api.kalshi.co/trade-api/v2"
+kalshi_prod_ws_url: "wss://api.elections.kalshi.com/trade-api/ws/v2"
+kalshi_demo_ws_url: "wss://demo-api.kalshi.co/trade-api/ws/v2"
+polymarket_gamma_base_url: "https://gamma-api.polymarket.com"
+polymarket_clob_base_url: "https://clob.polymarket.com"
+
+# --- Storage ---
+db_path: "data/scanner.db"
+reports_dir: "reports"
+log_dir: "logs"
+pairs_override_path: "pairs_override.yaml"
+
+# --- Ingestion cadence ---
+universe_sync_minutes: 15
+snapshot_seconds: 30
+tracked_top_n: 200
+orderbook_depth_levels: 5        # top-of-book levels stored per side
+snapshot_concurrency: 8          # concurrent orderbook fetches per cycle
+
+# --- Scanning ---
+persistence_scans: 3             # consecutive scans a signal must survive
+min_edge_pct: 2.0                # net edge as % of capital at risk
+min_edge_usd: 1.00               # net edge in dollars at max executable size
+bucket_sum_buffer_cents: 1.0     # extra safety margin for bucket-sum arbs
+cross_platform_slippage_buffer_cents: 1.0
+
+# --- Matching (Strategy B) ---
+matcher_min_score: 0.55          # candidate-generation score threshold
+matcher_max_close_days_apart: 3  # resolution-date proximity for candidates
+matcher_sync_minutes: 60
+
+# --- Fees ---
+# General taker formula: fee = ceil_to_cent(rate * contracts * P * (1-P)).
+# Verify against the published schedule (see README "fees verify").
+kalshi_taker_fee_rate: 0.07
+kalshi_maker_fee_rate: 0.0175
+# Per-series overrides, e.g. { "KXINX": 0.035 }. Series ticker -> taker rate.
+kalshi_fee_rate_overrides: {}
+
+# --- Paper trading ---
+max_paper_size_usd: 100
+depth_participation_cap: 0.20    # max fraction of visible depth we take
+paper_mark_to_market_utc_hour: 0
+
+# --- Rate limiting ---
+rate_limit_rps: 5                # Kalshi requests/second (token bucket)
+polymarket_rate_limit_rps: 5
+
+# --- Transports ---
+# "rest" polls orderbooks; "ws" maintains books from the delta stream.
+# REST is the reliable default; WS is swappable per spec.
+snapshot_transport: "rest"
+
+# --- Alerts / reporting ---
+heartbeat_hours: 6
+daily_digest_utc_hour: 13
+weekly_report_weekday: 0         # 0 = Monday (UTC)
+
+# --- Live trading (future phase; MVP never places live orders) ---
+live_trading: false

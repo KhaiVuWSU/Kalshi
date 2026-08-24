@@ -1,0 +1,25 @@
+[Unit]
+Description=Kalshi Edge Scanner
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kalshi
+Group=kalshi
+WorkingDirectory=/opt/kalshi-scanner
+ExecStart=/opt/kalshi-scanner/.venv/bin/python -m src.main run
+Restart=always
+RestartSec=10
+# Persistence streaks reset on restart by design; frequent restarts only
+# make the scanner more conservative, never duplicate signals.
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/kalshi-scanner/data /opt/kalshi-scanner/logs /opt/kalshi-scanner/reports
+
+[Install]
+WantedBy=multi-user.target

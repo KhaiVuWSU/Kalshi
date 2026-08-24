@@ -50,6 +50,10 @@ def setup_logging(cfg: Config) -> None:
     sh.setFormatter(fmt)
     root.addHandler(fh)
     root.addHandler(sh)
+    # One line per HTTP request would swamp the logs (and any redirect file)
+    # at a request every ~200ms; scanner INFO lines already summarize cycles.
+    for noisy in ("httpx", "httpcore", "websockets"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
 class App:

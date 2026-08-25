@@ -145,20 +145,40 @@ def weekly_report(conn: sqlite3.Connection, reports_dir: str | Path) -> tuple[Pa
     return path, summary
 
 
+KIND_LABELS = {
+    "complement": "YES+NO priced under $1 in one market",
+    "bucket_sum_buy": "event buckets sum under $1 (buy them all)",
+    "bucket_sum_sell": "event buckets sum over $1 (fade them all)",
+    "monotonicity": "narrower outcome priced above the broader one",
+    "cross_platform": "Kalshi vs Polymarket pricing gap",
+}
+
+
 def format_signal_alert(sig_row: sqlite3.Row) -> str:
+    """Discord 'callout' for a qualifying signal: the exact plays, prices,
+    and size at which the inconsistency was executable when scanned."""
     legs = json.loads(sig_row["legs"])
-    provisional = " (PROVISIONAL PAIR — alert only)" if sig_row["provisional"] else ""
-    lines = [f"**New qualifying signal** — strategy {sig_row['strategy']} "
-             f"/ {sig_row['kind']}{provisional}",
-             f"Edge: {sig_row['edge_cents']:.2f}c/contract "
-             f"({sig_row['edge_pct']:.1f}%), ${sig_row['edge_usd']:.2f} "
-             f"at {sig_row['max_size_contracts']} contracts"]
+    provisional = (" — PROVISIONAL PAIR, verification pending, alert only"
+                   if sig_row["provisional"] else "")
+    label = KIND_LABELS.get(sig_row["kind"], sig_row["kind"])
+    lines = [
+        f":dart: **CALLOUT — {label}**{provisional}",
+        f"Net edge after fees: **{sig_row['edge_cents']:.2f}c/contract "
+        f"({sig_row['edge_pct']:.1f}%)** — ${sig_row['edge_usd']:.2f} total "
+        f"at up to {sig_row['max_size_contracts']} contracts",
+        "**The plays (all legs together, prices as scanned):**",
+    ]
     for leg in legs:
         if leg.get("platform") == "polymarket":
-            lines.append(f"- Polymarket ref: {leg['action']} YES @ "
-                         f"{leg['price_cents']:.1f}c (condition {leg['market_ticker'][:16]}…)")
+            lines.append(f"• Polymarket reference: YES trades at "
+                         f"{leg['price_cents']:.1f}c there (no action — "
+                         f"comparison leg)")
         else:
-            lines.append(f"- {leg['action'].upper()} {leg['side'].upper()} "
-                         f"`{leg['market_ticker']}` @ {leg['price_cents']:.1f}c "
+            lines.append(f"• **{leg['action'].upper()} {leg['side'].upper()}** "
+                         f"`{leg['market_ticker']}` @ ~{leg['price_cents']:.1f}c "
                          f"x{leg['contracts']} — {market_link(leg['market_ticker'])}")
+    lines.append(
+        "_Not financial advice. Automated structural signal — prices move; "
+        "verify the live book fills at these levels (all legs, full size) "
+        "before acting. Unproven until paper results are in._")
     return "\n".join(lines)

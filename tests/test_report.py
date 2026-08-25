@@ -51,6 +51,9 @@ def test_signal_alert_labels_provisional_and_links(conn):
     sid = _seed(conn)
     row = conn.execute("SELECT * FROM signals WHERE id=?", (sid,)).fetchone()
     text = report.format_signal_alert(row)
+    assert "CALLOUT" in text
     assert "PROVISIONAL" in text
     assert "kalshi.com/markets/KMKT" in text
-    assert "Polymarket ref" in text
+    assert "Polymarket reference" in text
+    assert "Not financial advice" in text
+    assert "BUY YES" in text

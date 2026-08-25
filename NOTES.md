@@ -87,6 +87,24 @@ Polymarket hosts** (`api.elections.kalshi.com`, `demo-api.kalshi.co`,
   confirmed pairs genuinely exist, M3 reporting will say so with the real
   number (spec explicitly allows this).
 
+## Live-deployment findings (2026-08-24, first real run)
+
+- **The open universe is ~1.27M markets across ~11.7k events** — orders of
+  magnitude beyond the spec's assumptions; dominated by zero-volume
+  auto-generated shard series (e.g. `KXMVECROSSCATEGORY-SHARD1-…`). A full
+  market sync is ~1.3k paginated requests (~4–13 min at 5 rps).
+- **~37k markets left the open set per sync cycle.** The original design
+  refetched each individually (~2h of requests, tripping 429s); vanished
+  markets are now marked closed locally and only position-holding markets
+  get true terminal status (via settlement).
+- Occasional 429 backoffs during sync bursts are normal and handled; if they
+  become continuous, lower `rate_limit_rps`.
+- Candidate generation now draws from the top 20k markets by volume, and
+  exhaustive-event candidates require ≥200 traded contracts — at full scale
+  the review queue would be unreviewable and overwhelmingly untradeable.
+- A few derived series names 404 on /series (`KXMLBWINS`, …); misses are
+  cached as stub rows, and those markets use the default fee rate.
+
 ## Misc
 
 - Market links in alerts use `https://kalshi.com/markets/<ticker>`; Kalshi's

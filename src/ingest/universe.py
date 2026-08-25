@@ -4,6 +4,8 @@ from __future__ import annotations
 import logging
 import sqlite3
 
+import httpx
+
 from ..clients.kalshi import KalshiClient
 from ..config import Config
 from .. import db
@@ -49,6 +51,16 @@ async def sync_universe(conn: sqlite3.Connection, client: KalshiClient,
             s = await client.get_series(st)
             if s:
                 db.upsert_series(conn, s)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                # Some series names are derived from event tickers and have no
+                # series record. Metadata here is optional (fee overrides,
+                # category), so cache the miss as a stub row instead of
+                # re-asking — and re-warning — every sync.
+                db.upsert_series(conn, {"ticker": st, "not_found": True})
+                log.info("series %s has no series record (404); cached miss", st)
+            else:
+                log.warning("series fetch failed for %s: %s", st, exc)
         except Exception as exc:
             log.warning("series fetch failed for %s: %s", st, exc)
     conn.commit()

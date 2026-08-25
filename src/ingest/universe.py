@@ -65,15 +65,18 @@ async def sync_universe(conn: sqlite3.Connection, client: KalshiClient,
             log.warning("series fetch failed for %s: %s", st, exc)
     conn.commit()
 
-    # Markets that disappeared from the open set: refresh their real status.
+    # Markets no longer in the open set: mark them closed locally, WITHOUT
+    # per-market refetches. At Kalshi's real scale (~1.3M open markets,
+    # tens of thousands closing per cycle) individual refreshes would take
+    # hours and trip rate limits. The true terminal status/result of the
+    # only markets that matter (ones holding paper positions) is fetched
+    # directly by paper.engine.settle_positions.
     vanished = prev_open - seen_markets
-    for ticker in sorted(vanished):
-        try:
-            m = await client.get_market(ticker)
-            if m:
-                db.upsert_market(conn, m)
-        except Exception as exc:
-            log.warning("refresh of closed market %s failed: %s", ticker, exc)
+    if vanished:
+        ts = db.now()
+        conn.executemany(
+            "UPDATE markets SET status='closed', updated_at=? WHERE ticker=?",
+            [(ts, t) for t in vanished])
     conn.commit()
 
     stats = {"events": n_events, "markets": n_markets, "closed": len(vanished)}

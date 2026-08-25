@@ -178,6 +178,17 @@ def test_cross_event_nesting_goes_to_candidates_not_scan(conn, cfg):
     assert [s.kind for s in sigs] == ["monotonicity"]
 
 
+def test_candidate_generation_handles_mixed_strikes(conn):
+    # A series mixing strike-bearing and strike-less markets must not
+    # TypeError while sorting (None vs float in the shape key).
+    make_market(conn, "S-A", event_ticker="S-E1", series_ticker="S",
+                close_time="2026-03-31T00:00:00Z", strike_type="greater",
+                floor_strike=5.0)
+    make_market(conn, "S-B", event_ticker="S-E2", series_ticker="S",
+                close_time="2026-06-30T00:00:00Z")
+    correlated.generate_relationship_candidates(conn)   # must not raise
+
+
 def test_candidate_generation_idempotent(conn):
     make_market(conn, "SER-MAR", event_ticker="SER-26MAR", series_ticker="SER",
                 close_time="2026-03-31T00:00:00Z")

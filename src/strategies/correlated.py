@@ -31,6 +31,11 @@ from .common import Leg, Signal, best_size
 log = logging.getLogger(__name__)
 
 MAX_NESTED_CANDIDATES_PER_SERIES = 40
+# Kalshi's open universe is ~1.3M markets (mostly zero-volume auto-generated
+# shards). Candidates only matter where a violation would be tradeable, so
+# generation looks at the most-traded slice, not the whole universe.
+CANDIDATE_MARKET_POOL = 20_000
+MIN_EVENT_VOLUME_CONTRACTS = 200
 
 
 # --------------------------------------------------------------------------
@@ -89,18 +94,29 @@ def generate_relationship_candidates(conn: sqlite3.Connection) -> int:
     rows = conn.execute(
         "SELECT ticker, event_ticker, series_ticker, close_time, strike_type, "
         "floor_strike, cap_strike, title, yes_sub_title FROM markets "
-        "WHERE status IN ('open','active')").fetchall()
+        "WHERE status IN ('open','active') "
+        "ORDER BY COALESCE(volume,0) DESC LIMIT ?",
+        (CANDIDATE_MARKET_POOL,)).fetchall()
 
     by_series: dict[str, list[sqlite3.Row]] = {}
     for m in rows:
         if m["series_ticker"]:
             by_series.setdefault(m["series_ticker"], []).append(m)
 
+    def _num(v) -> float:
+        # Sort-safe strike value: None (and junk) must not TypeError against
+        # floats when a series mixes markets with and without strikes.
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return float("-inf")
+
     for series, ms in by_series.items():
         candidates = 0
         # Same strike shape, different events, different close time: possible
         # cumulative windows ("by <date>").
-        key = lambda m: (m["strike_type"] or "", m["floor_strike"], m["cap_strike"])
+        key = lambda m: (m["strike_type"] or "", _num(m["floor_strike"]),
+                         _num(m["cap_strike"]))
         ms_sorted = sorted(ms, key=lambda m: (key(m), m["close_time"] or ""))
         for _, group in itertools.groupby(ms_sorted, key=key):
             g = list(group)
@@ -124,12 +140,15 @@ def generate_relationship_candidates(conn: sqlite3.Connection) -> int:
                 added += cur.rowcount
                 candidates += cur.rowcount
 
-    # Exhaustiveness candidates: mutually exclusive events with >=2 buckets.
+    # Exhaustiveness candidates: mutually exclusive events with >=2 buckets
+    # and enough traded volume that a bucket-sum violation would be tradeable.
     for e in conn.execute(
-            "SELECT e.event_ticker, e.title, COUNT(m.ticker) AS n FROM events e "
+            "SELECT e.event_ticker, e.title, COUNT(m.ticker) AS n, "
+            "SUM(COALESCE(m.volume,0)) AS vol FROM events e "
             "JOIN markets m ON m.event_ticker = e.event_ticker "
             "WHERE e.mutually_exclusive=1 AND m.status IN ('open','active') "
-            "GROUP BY e.event_ticker HAVING n >= 2"):
+            "GROUP BY e.event_ticker HAVING n >= 2 AND vol >= ?",
+            (MIN_EVENT_VOLUME_CONTRACTS,)):
         cur = conn.execute(
             """INSERT OR IGNORE INTO relationship_candidates
                (kind, narrower_ticker, broader_ticker, event_ticker, rationale,

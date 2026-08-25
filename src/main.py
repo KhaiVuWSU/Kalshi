@@ -246,7 +246,13 @@ class App:
         db.next_scan_seq(self.conn)
         # Universe sync must complete once before scanning has anything to do.
         await universe.sync_universe(self.conn, self.kalshi, self.cfg)
-        correlated.generate_relationship_candidates(self.conn)
+        try:
+            n = correlated.generate_relationship_candidates(self.conn)
+            log.info("startup relationship candidates added: %d", n)
+        except Exception:
+            # Candidate generation must never keep the scanner from starting;
+            # the universe loop retries it every cycle anyway.
+            log.exception("startup candidate generation failed")
         loops = [self.universe_loop(), self.matcher_loop(), self.scan_loop(),
                  self.settle_loop(), self.heartbeat_loop(), self.report_loop()]
         # First universe_loop iteration re-syncs immediately; harmless (idempotent).
@@ -280,17 +286,55 @@ async def cmd_verify_auth(cfg: Config) -> int:
         await client.aclose()
 
 
-def cmd_candidates(conn, status: str) -> None:
-    rows = conn.execute(
-        "SELECT * FROM relationship_candidates WHERE status=? ORDER BY id",
-        (status,)).fetchall()
-    if not rows:
+def cmd_candidates(conn, status: str, limit: int) -> None:
+    total = conn.execute(
+        "SELECT COUNT(*) c FROM relationship_candidates WHERE status=?",
+        (status,)).fetchone()["c"]
+    if not total:
         print(f"No {status} relationship candidates.")
         return
+    rows = conn.execute(
+        "SELECT * FROM relationship_candidates WHERE status=? ORDER BY id LIMIT ?",
+        (status, limit)).fetchall()
+    print(f"{total} {status} candidate(s); showing first {len(rows)} "
+          f"(use --limit to see more)")
     for r in rows:
         target = (f"{r['narrower_ticker']} => {r['broader_ticker']}"
                   if r["kind"] == "nested" else f"event {r['event_ticker']}")
         print(f"[{r['id']}] {r['kind']}: {target}\n    {r['rationale']}")
+
+
+def cmd_stats(conn) -> None:
+    """One-screen health readout of what's actually in the database."""
+    def q(sql, *args):
+        return conn.execute(sql, args).fetchall()
+
+    print("markets by status:")
+    for r in q("SELECT status, COUNT(*) n FROM markets GROUP BY status "
+               "ORDER BY n DESC LIMIT 8"):
+        print(f"  {r['status'] or '(null)'}: {r['n']}")
+    print(f"events: {q('SELECT COUNT(*) n FROM events')[0]['n']}"
+          f" (mutually_exclusive: "
+          f"{q('SELECT COUNT(*) n FROM events WHERE mutually_exclusive=1')[0]['n']})")
+    print(f"series rows: {q('SELECT COUNT(*) n FROM series')[0]['n']}")
+    print("relationship candidates:")
+    for r in q("SELECT kind, status, COUNT(*) n FROM relationship_candidates "
+               "GROUP BY kind, status"):
+        print(f"  {r['kind']}/{r['status']}: {r['n']}")
+    print("market pairs:")
+    for r in q("SELECT status, COUNT(*) n FROM market_pairs GROUP BY status"):
+        print(f"  {r['status']}: {r['n']}")
+    print(f"orderbook snapshots: {q('SELECT COUNT(*) n FROM orderbook_snapshots')[0]['n']}"
+          f" (last 1h: "
+          f"{q('SELECT COUNT(*) n FROM orderbook_snapshots WHERE ts >= ?', db.now() - 3600)[0]['n']})")
+    print("signals:")
+    for r in q("SELECT strategy, status, COUNT(*) n FROM signals "
+               "GROUP BY strategy, status"):
+        print(f"  {r['strategy']}/{r['status']}: {r['n']}")
+    n_open = q("SELECT COUNT(*) n FROM paper_positions WHERE status=?", "open")[0]["n"]
+    n_settled = q("SELECT COUNT(*) n FROM paper_positions WHERE status=?", "settled")[0]["n"]
+    print(f"paper positions open/settled: {n_open}/{n_settled}")
+    print(f"scan_seq: {db.meta_get(conn, 'scan_seq', '0')}")
 
 
 def cmd_decide_relationship(conn, cand_id: int, decision: str) -> None:
@@ -328,6 +372,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("verify-auth")
     p = sub.add_parser("candidates")
     p.add_argument("--status", default="pending")
+    p.add_argument("--limit", type=int, default=50)
+    sub.add_parser("stats")
     p = sub.add_parser("confirm-relationship")
     p.add_argument("id", type=int)
     p = sub.add_parser("reject-relationship")
@@ -345,11 +391,13 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(cmd_verify_auth(cfg))
 
     if args.command in ("candidates", "confirm-relationship",
-                        "reject-relationship", "pairs", "report"):
+                        "reject-relationship", "pairs", "report", "stats"):
         conn = db.connect(cfg.db_path)
         try:
             if args.command == "candidates":
-                cmd_candidates(conn, args.status)
+                cmd_candidates(conn, args.status, args.limit)
+            elif args.command == "stats":
+                cmd_stats(conn)
             elif args.command == "confirm-relationship":
                 cmd_decide_relationship(conn, args.id, "confirmed")
             elif args.command == "reject-relationship":

@@ -13,6 +13,7 @@ class StubKalshi:
         self.events = events
         self.series_404 = set(series_404)
         self.series_calls: list[str] = []
+        self.market_calls: list[str] = []
 
     async def iter_events(self, status="open"):
         for e in self.events:
@@ -31,6 +32,7 @@ class StubKalshi:
         return {"ticker": st, "title": st}
 
     async def get_market(self, ticker):
+        self.market_calls.append(ticker)
         for m in self.markets:
             if m["ticker"] == ticker:
                 return m
@@ -58,6 +60,19 @@ async def test_series_404_cached_not_refetched(conn):
     assert client.series_calls.count("GOOD") == 1
     row = conn.execute("SELECT * FROM series WHERE ticker='MISSING'").fetchone()
     assert row is not None and row["title"] is None
+
+
+async def test_vanished_markets_marked_closed_without_refetch(conn):
+    cfg = Config()
+    await universe.sync_universe(conn, StubKalshi(MARKETS, EVENTS), cfg)
+    shrunk = StubKalshi([MARKETS[0]], EVENTS)   # MISSING-1 left the open set
+    stats = await universe.sync_universe(conn, shrunk, cfg)
+    row = conn.execute(
+        "SELECT status FROM markets WHERE ticker='MISSING-1'").fetchone()
+    assert row["status"] == "closed"
+    # At real scale tens of thousands vanish per cycle: no per-market refetch.
+    assert shrunk.market_calls == []
+    assert stats["closed"] == 1
 
 
 async def test_sync_idempotent_market_counts(conn):
